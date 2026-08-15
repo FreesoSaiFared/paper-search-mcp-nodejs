@@ -3,7 +3,11 @@ import type { ToolName } from './schemas.js';
 import { parseToolArgs } from './schemas.js';
 import { PaperFactory, type Paper } from '../models/Paper.js';
 import { PaperSource, type SearchOptions } from '../platforms/PaperSource.js';
+import { CitationService } from '../services/CitationService.js';
+import { sanitizeDownloadPath, sanitizeDoi } from '../utils/SecurityUtils.js';
 import { logDebug } from '../utils/Logger.js';
+
+const citationService = new CitationService();
 
 function jsonTextResponse(text: string) {
   return {
@@ -222,7 +226,11 @@ export async function handleToolCall(
 
     case 'download_paper': {
       const { paperId, platform, savePath } = args;
-      const resolvedSavePath = savePath || './downloads';
+      const pathResult = sanitizeDownloadPath(savePath, './downloads');
+      if (!pathResult.valid) {
+        throw new Error(pathResult.error || 'Invalid save path');
+      }
+      const resolvedSavePath = pathResult.sanitized;
 
       const searcher = (searchers as any)[platform];
       if (!searcher) {
@@ -257,13 +265,18 @@ export async function handleToolCall(
 
     case 'get_paper_by_doi': {
       const { doi, platform } = args;
+      const doiResult = sanitizeDoi(doi);
+      if (!doiResult.valid) {
+        throw new Error(doiResult.error || 'Invalid DOI format');
+      }
+      const cleanDoi = doiResult.sanitized;
       const results: Record<string, any>[] = [];
 
       if (platform === 'all') {
         for (const [platformName, searcher] of Object.entries(searchers)) {
           if (platformName === 'wos' || platformName === 'scholar') continue;
           try {
-            const paper = await (searcher as PaperSource).getPaperByDoi(doi);
+            const paper = await (searcher as PaperSource).getPaperByDoi(cleanDoi);
             if (paper) {
               results.push(PaperFactory.toDict(paper));
             }
@@ -276,21 +289,25 @@ export async function handleToolCall(
         if (!searcher) {
           throw new Error(`Unsupported platform: ${platform}`);
         }
-        const paper = await searcher.getPaperByDoi(doi);
+        const paper = await searcher.getPaperByDoi(cleanDoi);
         if (paper) {
           results.push(PaperFactory.toDict(paper));
         }
       }
 
       if (results.length === 0) {
-        return jsonTextResponse(`No paper found with DOI: ${doi}`);
+        return jsonTextResponse(`No paper found with DOI: ${cleanDoi}`);
       }
-      return jsonTextResponse(`Found ${results.length} paper(s) with DOI ${doi}:\n\n${JSON.stringify(results, null, 2)}`);
+      return jsonTextResponse(`Found ${results.length} paper(s) with DOI ${cleanDoi}:\n\n${JSON.stringify(results, null, 2)}`);
     }
 
     case 'search_scihub': {
       const { doiOrUrl, downloadPdf, savePath } = args;
-      const resolvedSavePath = savePath || './downloads';
+      const pathResult = sanitizeDownloadPath(savePath, './downloads');
+      if (!pathResult.valid) {
+        throw new Error(pathResult.error || 'Invalid save path');
+      }
+      const resolvedSavePath = pathResult.sanitized;
 
       const results = await searchers.scihub.search(doiOrUrl);
       if (results.length === 0) {
@@ -369,16 +386,6 @@ export async function handleToolCall(
       );
     }
 
-    case 'search_wiley': {
-      return jsonTextResponse(
-        `DEPRECATED: Wiley TDM API does not support keyword search.\n\n` +
-          `To access Wiley content:\n` +
-          `1. Use search_crossref to find Wiley articles (filter by publisher if needed)\n` +
-          `2. Use download_paper with platform="wiley" and the DOI to download the PDF\n\n` +
-          `Example: download_paper(paperId="10.1111/jtsb.12390", platform="wiley")`
-      );
-    }
-
     case 'search_scopus': {
       const { query, maxResults, year, author, journal, affiliation, subject, openAccess, documentType } = args;
       if (!process.env.ELSEVIER_API_KEY) {
@@ -422,6 +429,35 @@ export async function handleToolCall(
           2
         )}`
       );
+    }
+
+    case 'get_citations': {
+      const { doi, forceRefresh } = args;
+      const doiResult = sanitizeDoi(doi);
+      if (!doiResult.valid) {
+        throw new Error(doiResult.error || 'Invalid DOI format');
+      }
+
+      const data = await citationService.getCitationDataByDoi(doiResult.sanitized, forceRefresh);
+
+      if (!data) {
+        return jsonTextResponse(`No citation data found for DOI: ${doiResult.sanitized}`);
+      }
+
+      const summary = {
+        paper_id: data.paperId,
+        title: data.title,
+        citation_count: data.citationCount,
+        reference_count: data.referenceCount,
+        influential_citation_count: data.influentialCitationCount,
+        year: data.year,
+        venue: data.venue,
+        doi: data.doi,
+        url: data.url,
+        authors: data.authors?.map(a => a.authorId ? `${a.name} (${a.authorId})` : a.name) ?? []
+      };
+
+      return jsonTextResponse(`Citations for ${doiResult.sanitized}:\n\n${JSON.stringify(summary, null, 2)}`);
     }
 
     case 'get_platform_status': {

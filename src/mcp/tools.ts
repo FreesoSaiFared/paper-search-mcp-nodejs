@@ -419,18 +419,6 @@ export const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'search_wiley',
-    description:
-      'DEPRECATED: Wiley TDM API does not support keyword search. Use search_crossref to find Wiley articles, then use download_paper with platform="wiley" to download PDFs by DOI.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'This tool is deprecated. Use search_crossref instead.' }
-      },
-      required: ['query']
-    }
-  },
-  {
     name: 'search_scopus',
     description: 'Search the Scopus abstract and citation database (requires Elsevier API key)',
     inputSchema: {
@@ -489,6 +477,22 @@ export const TOOLS: Tool[] = [
         }
       },
       required: ['query']
+    }
+  },
+  {
+    name: 'get_citations',
+    description:
+      'Retrieve citation data (citation count, references, venue) for a paper by DOI using Semantic Scholar',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        doi: { type: 'string', description: 'DOI (Digital Object Identifier)' },
+        forceRefresh: {
+          type: 'boolean',
+          description: 'Bypass the cache and fetch fresh data (default: false)'
+        }
+      },
+      required: ['doi']
     }
   }
 ];

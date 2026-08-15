@@ -169,12 +169,6 @@ export const SearchSpringerSchema = z
   })
   .strip();
 
-export const SearchWileySchema = z
-  .object({
-    query: z.string().min(1)
-  })
-  .strip();
-
 export const SearchScopusSchema = z
   .object({
     query: z.string().min(1),
@@ -206,6 +200,13 @@ export const GetPlatformStatusSchema = z
   })
   .strip();
 
+export const GetCitationsSchema = z
+  .object({
+    doi: z.string().min(1),
+    forceRefresh: z.boolean().optional().default(false)
+  })
+  .strip();
+
 export type ToolName =
   | 'search_papers'
   | 'search_arxiv'
@@ -223,9 +224,9 @@ export type ToolName =
   | 'get_platform_status'
   | 'search_sciencedirect'
   | 'search_springer'
-  | 'search_wiley'
   | 'search_scopus'
-  | 'search_crossref';
+  | 'search_crossref'
+  | 'get_citations';
 
 export function parseToolArgs(toolName: ToolName, args: unknown): any {
   switch (toolName) {
@@ -257,12 +258,12 @@ export function parseToolArgs(toolName: ToolName, args: unknown): any {
       return CheckSciHubMirrorsSchema.parse(args);
     case 'get_platform_status':
       return GetPlatformStatusSchema.parse(args ?? {});
+    case 'get_citations':
+      return GetCitationsSchema.parse(args);
     case 'search_sciencedirect':
       return SearchScienceDirectSchema.parse(args);
     case 'search_springer':
       return SearchSpringerSchema.parse(args);
-    case 'search_wiley':
-      return SearchWileySchema.parse(args);
     case 'search_scopus':
       return SearchScopusSchema.parse(args);
     case 'search_crossref':

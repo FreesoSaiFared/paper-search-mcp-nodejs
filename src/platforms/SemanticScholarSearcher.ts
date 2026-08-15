@@ -11,7 +11,8 @@ import { PaperSource, SearchOptions, DownloadOptions, PlatformCapabilities } fro
 import { RateLimiter } from '../utils/RateLimiter.js';
 import { ErrorHandler } from '../utils/ErrorHandler.js';
 import { RequestCache } from '../utils/RequestCache.js';
-import { sanitizeDoi } from '../utils/SecurityUtils.js';
+import { sanitizeDoi, sanitizeFilename } from '../utils/SecurityUtils.js';
+import { PDFExtractor } from '../utils/PDFExtractor.js';
 import { TIMEOUTS, USER_AGENT } from '../config/constants.js';
 import { logDebug } from '../utils/Logger.js';
 
@@ -273,7 +274,7 @@ export class SemanticScholarSearcher extends PaperSource {
         fs.mkdirSync(savePath, { recursive: true });
       }
 
-      const filename = `semantic_${paperId.replace(/[/\\:*?"<>|]/g, '_')}.pdf`;
+      const filename = `semantic_${sanitizeFilename(paperId)}.pdf`;
       const filePath = path.join(savePath, filename);
 
       // 检查文件是否已存在
@@ -308,7 +309,7 @@ export class SemanticScholarSearcher extends PaperSource {
   async readPaper(paperId: string, options: DownloadOptions = {}): Promise<string> {
     try {
       const savePath = options.savePath || './downloads';
-      const filename = `semantic_${paperId.replace(/[/\\:*?"<>|]/g, '_')}.pdf`;
+      const filename = `semantic_${sanitizeFilename(paperId)}.pdf`;
       const filePath = path.join(savePath, filename);
 
       // 如果PDF不存在，先下载
@@ -316,7 +317,10 @@ export class SemanticScholarSearcher extends PaperSource {
         await this.downloadPdf(paperId, options);
       }
 
-      return `PDF file downloaded at: ${filePath}. Full text extraction requires additional PDF parsing implementation.`;
+      // 提取PDF全文
+      const extractor = new PDFExtractor();
+      const result = await extractor.extractFromFile(filePath);
+      return result.text || 'No text extracted from the PDF.';
     } catch (error) {
       this.handleHttpError(error, 'read paper');
     }

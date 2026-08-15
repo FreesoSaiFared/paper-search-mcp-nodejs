@@ -10,6 +10,7 @@ import * as path from 'path';
 import { PaperSource, SearchOptions, DownloadOptions, PlatformCapabilities } from './PaperSource.js';
 import { Paper, PaperFactory } from '../models/Paper.js';
 import { logDebug, logWarn } from '../utils/Logger.js';
+import { sanitizeFilename } from '../utils/SecurityUtils.js';
 import { TIMEOUTS } from '../config/constants.js';
 
 interface MirrorSite {
@@ -361,7 +362,7 @@ export class SciHubSearcher extends PaperSource {
       throw new Error(`Cannot find PDF for: ${paperId}`);
     }
 
-    const fileName = `${paperId.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+    const fileName = `${sanitizeFilename(paperId)}.pdf`;
     const filePath = path.join(savePath, fileName);
 
     // 检查文件是否已存在

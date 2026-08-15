@@ -3,6 +3,87 @@
  * Provides comprehensive protection against security vulnerabilities
  */
 
+import * as path from 'path';
+import * as fs from 'fs';
+
+/**
+ * Validate and sanitize a download path to prevent path traversal.
+ *
+ * Resolves the given path relative to `baseDir` (default: './downloads')
+ * and rejects any resolved path that escapes the base directory.
+ * MCP tool arguments are untrusted (LLM-controlled); this guard ensures
+ * a malicious `savePath` like '../../etc' or an absolute system path
+ * cannot be used to write outside the allowed download directory.
+ *
+ * After lexical resolve, also checks the real (on-disk) path via
+ * `realpathSync` to defeat symlinks and Windows junctions that point
+ * outside the base directory.
+ *
+ * @param input - User-supplied save path (may be undefined/empty)
+ * @param baseDir - Allowed root directory (default: './downloads')
+ * @returns { valid: boolean; sanitized: string; error?: string }
+ *   `sanitized` is the resolved absolute path when valid.
+ */
+export function sanitizeDownloadPath(
+  input?: string,
+  baseDir: string = './downloads'
+): { valid: boolean; sanitized: string; error?: string } {
+  if (!input || typeof input !== 'string' || input.trim() === '') {
+    return { valid: true, sanitized: path.resolve(baseDir) };
+  }
+
+  const trimmed = input.trim();
+
+  // Reject null bytes / control characters outright.
+  if (/[\x00-\x1F\x7F]/.test(trimmed)) {
+    return { valid: false, sanitized: '', error: 'Path contains invalid control characters' };
+  }
+
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedTarget = path.resolve(resolvedBase, trimmed);
+
+  // Lexical check: ensure the resolved target stays within the base directory.
+  const relative = path.relative(resolvedBase, resolvedTarget);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    return {
+      valid: false,
+      sanitized: '',
+      error: `Path traversal detected: "${trimmed}" escapes the download directory`
+    };
+  }
+
+  // Real-path check: resolve symlinks/junctions and re-verify containment.
+  // If the target (or any existing ancestor) is a symlink/junction pointing
+  // outside baseDir, realpathSync will reveal the true destination.
+  try {
+    const realBase = fs.realpathSync.native(resolvedBase);
+    const realTarget = fs.realpathSync.native(resolvedTarget);
+    const realRelative = path.relative(realBase, realTarget);
+    if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) {
+      return {
+        valid: false,
+        sanitized: '',
+        error: `Path traversal detected: "${trimmed}" resolves outside the download directory via symlink or junction`
+      };
+    }
+  } catch {
+    // realpathSync fails if the path doesn't exist yet — that's fine,
+    // the lexical check already passed. A non-existent path can't be a symlink.
+  }
+
+  return { valid: true, sanitized: resolvedTarget };
+}
+
+/**
+ * Sanitize a filename component derived from untrusted input (e.g. paperId).
+ * Strips path separators and other filesystem-dangerous characters so the
+ * result cannot escape the enclosing directory via '../' or absolute paths.
+ */
+export function sanitizeFilename(input: string): string {
+  if (!input || typeof input !== 'string') return 'download';
+  return input.replace(/[/\\]/g, '_').replace(/[<>:"|?*\x00-\x1F\x7F]/g, '_').trim() || 'download';
+}
+
 /**
  * Comprehensive request sanitization to remove sensitive data
  * @param config - Axios request configuration
@@ -227,6 +308,11 @@ export function sanitizeDoi(doi: string): { valid: boolean; sanitized: string; e
     }
   }
 
+  // Reject control characters (including NUL, CR, LF) before regex matching.
+  if (/[\x00-\x1F\x7F]/.test(sanitized)) {
+    return { valid: false, sanitized: '', error: 'DOI contains control characters' };
+  }
+
   // Basic DOI format validation
   // DOI should start with "10." followed by digits and then any characters
   const doiPattern = /^10\.\d{4,}(\.\d+)*\/\S+$/;
@@ -401,6 +487,8 @@ export function looksLikeToken(str: string): boolean {
 }
 
 export default {
+  sanitizeDownloadPath,
+  sanitizeFilename,
   sanitizeRequest,
   sanitizeHeaders,
   sanitizeParams,

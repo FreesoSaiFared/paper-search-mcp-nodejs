@@ -21,7 +21,8 @@ import { PaperSource, SearchOptions, DownloadOptions, PlatformCapabilities } fro
 import { Paper, PaperFactory } from '../models/Paper.js';
 import { RateLimiter } from '../utils/RateLimiter.js';
 import { ErrorHandler } from '../utils/ErrorHandler.js';
-import { sanitizeDoi } from '../utils/SecurityUtils.js';
+import { sanitizeDoi, sanitizeFilename } from '../utils/SecurityUtils.js';
+import { PDFExtractor } from '../utils/PDFExtractor.js';
 import { TIMEOUTS } from '../config/constants.js';
 
 export class WileySearcher extends PaperSource {
@@ -104,7 +105,7 @@ export class WileySearcher extends PaperSource {
       );
 
       // Generate filename from DOI
-      const fileName = `${cleanDoi.replace(/[\/\\:*?"<>|]/g, '_')}.pdf`;
+      const fileName = `${sanitizeFilename(cleanDoi)}.pdf`;
       const filePath = path.join(savePath, fileName);
 
       const writer = fs.createWriteStream(filePath);
@@ -167,6 +168,29 @@ export class WileySearcher extends PaperSource {
   }
 
   async readPaper(paperId: string, options: DownloadOptions = {}): Promise<string> {
-    return 'Wiley TDM API only supports PDF download. Use downloadPdf() method with a DOI to get the full PDF.';
+    try {
+      const savePath = options.savePath || './downloads';
+      const fs = await import('fs');
+      const path = await import('path');
+
+      // Normalize DOI the same way downloadPdf does so filenames match.
+      const doiResult = sanitizeDoi(paperId);
+      const cleanDoi = doiResult.valid ? doiResult.sanitized : paperId;
+
+      const fileName = `${sanitizeFilename(cleanDoi)}.pdf`;
+      const filePath = path.join(savePath, fileName);
+
+      // 如果PDF不存在，先下载
+      if (!fs.existsSync(filePath)) {
+        await this.downloadPdf(paperId, options);
+      }
+
+      // 提取PDF全文
+      const extractor = new PDFExtractor();
+      const result = await extractor.extractFromFile(filePath);
+      return result.text || 'No text extracted from the PDF.';
+    } catch (error: any) {
+      throw new Error(`Failed to read paper: ${error.message}`);
+    }
   }
 }

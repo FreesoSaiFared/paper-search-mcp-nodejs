@@ -218,11 +218,11 @@ export abstract class PaperSource {
   protected extractFilename(url: string, paperId: string, extension = 'pdf'): string {
     const urlParts = url.split('/');
     const lastPart = urlParts[urlParts.length - 1];
-    
+
     if (lastPart && lastPart.includes('.')) {
       return lastPart;
     }
-    
+
     return `${paperId}.${extension}`;
   }
 }

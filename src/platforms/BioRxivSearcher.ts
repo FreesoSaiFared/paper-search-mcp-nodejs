@@ -12,6 +12,8 @@ import { TIMEOUTS, USER_AGENT } from '../config/constants.js';
 import { logDebug } from '../utils/Logger.js';
 import { RateLimiter } from '../utils/RateLimiter.js';
 import { ErrorHandler } from '../utils/ErrorHandler.js';
+import { sanitizeFilename } from '../utils/SecurityUtils.js';
+import { PDFExtractor } from '../utils/PDFExtractor.js';
 
 interface BioRxivSearchOptions extends SearchOptions {
   /** 搜索天数范围 */
@@ -135,7 +137,7 @@ export class BioRxivSearcher extends PaperSource {
         fs.mkdirSync(savePath, { recursive: true });
       }
 
-      const filename = `${paperId.replace(/\//g, '_')}.pdf`;
+      const filename = `${sanitizeFilename(paperId)}.pdf`;
       const filePath = path.join(savePath, filename);
 
       // 检查文件是否已存在
@@ -172,14 +174,17 @@ export class BioRxivSearcher extends PaperSource {
   async readPaper(paperId: string, options: DownloadOptions = {}): Promise<string> {
     try {
       const savePath = options.savePath || './downloads';
-      const filePath = path.join(savePath, `${paperId.replace(/\//g, '_')}.pdf`);
+      const filePath = path.join(savePath, `${sanitizeFilename(paperId)}.pdf`);
 
       // 如果PDF不存在，先下载
       if (!fs.existsSync(filePath)) {
         await this.downloadPdf(paperId, options);
       }
 
-      return `PDF file downloaded at: ${filePath}. Full text extraction requires additional PDF parsing implementation.`;
+      // 提取PDF全文
+      const extractor = new PDFExtractor();
+      const result = await extractor.extractFromFile(filePath);
+      return result.text || 'No text extracted from the PDF.';
     } catch (error) {
       this.handleHttpError(error, 'read paper');
     }

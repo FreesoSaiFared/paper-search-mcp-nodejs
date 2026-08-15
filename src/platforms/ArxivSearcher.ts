@@ -14,6 +14,8 @@ import { logDebug } from '../utils/Logger.js';
 import { RateLimiter } from '../utils/RateLimiter.js';
 import { ErrorHandler } from '../utils/ErrorHandler.js';
 import { RequestCache } from '../utils/RequestCache.js';
+import { sanitizeFilename } from '../utils/SecurityUtils.js';
+import { PDFExtractor } from '../utils/PDFExtractor.js';
 
 interface ArxivEntry {
   id: string[];
@@ -148,7 +150,7 @@ export class ArxivSearcher extends PaperSource {
         fs.mkdirSync(savePath, { recursive: true });
       }
 
-      const filename = `${paperId}.pdf`;
+      const filename = `${sanitizeFilename(paperId)}.pdf`;
       const filePath = path.join(savePath, filename);
 
       // 检查文件是否已存在
@@ -183,16 +185,19 @@ export class ArxivSearcher extends PaperSource {
    */
   async readPaper(paperId: string, options: DownloadOptions = {}): Promise<string> {
     try {
+      const safeId = sanitizeFilename(paperId);
       const savePath = options.savePath || './downloads';
-      const filePath = path.join(savePath, `${paperId}.pdf`);
+      const filePath = path.join(savePath, `${safeId}.pdf`);
 
       // 如果PDF不存在，先下载
       if (!fs.existsSync(filePath)) {
         await this.downloadPdf(paperId, options);
       }
 
-      // 这里需要PDF解析库，暂时返回提示信息
-      return `PDF file downloaded at: ${filePath}. Full text extraction requires additional PDF parsing implementation.`;
+      // 提取PDF全文
+      const extractor = new PDFExtractor();
+      const result = await extractor.extractFromFile(filePath);
+      return result.text || 'No text extracted from the PDF.';
     } catch (error) {
       this.handleHttpError(error, 'read paper');
     }

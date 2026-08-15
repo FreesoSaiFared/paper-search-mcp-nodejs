@@ -78,15 +78,16 @@ describe('QuotaManager', () => {
       quotaManager.incrementUsage('test-platform');
       quotaManager.incrementUsage('test-platform');
 
+      let caught: QuotaExhaustedError | undefined;
       try {
         quotaManager.checkQuota('test-platform');
-        fail('Should have thrown QuotaExhaustedError');
       } catch (error: any) {
-        expect(error).toBeInstanceOf(QuotaExhaustedError);
-        expect(error.platform).toBe('test-platform');
-        expect(error.limit).toBe(3);
-        expect(error.resetAt).toBeDefined();
+        caught = error;
       }
+      expect(caught).toBeInstanceOf(QuotaExhaustedError);
+      expect(caught!.platform).toBe('test-platform');
+      expect(caught!.limit).toBe(3);
+      expect(caught!.resetAt).toBeDefined();
     });
 
     it('should track usage correctly', () => {

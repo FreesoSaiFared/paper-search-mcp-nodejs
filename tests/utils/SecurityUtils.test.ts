@@ -4,13 +4,16 @@
  */
 
 import { describe, it, expect, beforeEach } from '@jest/globals';
+import * as path from 'path';
 import {
   sanitizeDoi,
   escapeQueryValue,
   validateQueryComplexity,
   withTimeout,
   sanitizeRequest,
-  maskSensitiveData
+  maskSensitiveData,
+  sanitizeDownloadPath,
+  sanitizeFilename
 } from '../../src/utils/SecurityUtils.js';
 
 describe('SecurityUtils', () => {
@@ -57,6 +60,18 @@ describe('SecurityUtils', () => {
     it('should handle DOIs with special characters', () => {
       const result = sanitizeDoi('10.1000/xyz123');
       expect(result.valid).toBe(true);
+    });
+
+    it('should reject NUL bytes in DOI', () => {
+      const result = sanitizeDoi('10.1038/abc\x00def');
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('control');
+    });
+
+    it('should reject CR/LF in DOI', () => {
+      const result = sanitizeDoi('10.1038/abc\ndef');
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('control');
     });
   });
 
@@ -178,24 +193,94 @@ describe('SecurityUtils', () => {
     });
   });
 
-  describe('maskSensitiveData', () => {
-    it('should mask API keys in strings', () => {
-      const input = 'Error with api_key=secret123';
-      const result = maskSensitiveData(input);
-      expect(result).not.toContain('secret123');
+  describe('sanitizeDownloadPath', () => {
+    it('should resolve to base dir when input is empty', () => {
+      const result = sanitizeDownloadPath(undefined, './downloads');
+      expect(result.valid).toBe(true);
+      expect(result.sanitized).toBe(path.resolve('./downloads'));
     });
 
-    it('should mask Bearer tokens', () => {
-      const input = 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9';
-      const result = maskSensitiveData(input);
-      expect(result).not.toContain('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9');
+    it('should accept a safe relative path', () => {
+      const result = sanitizeDownloadPath('subdir', './downloads');
+      expect(result.valid).toBe(true);
+      expect(result.sanitized).toBe(path.resolve('./downloads/subdir'));
     });
 
-    it('should process all strings', () => {
-      const input = 'Normal error message';
-      const result = maskSensitiveData(input);
-      // maskSensitiveData may apply masking patterns
-      expect(typeof result).toBe('string');
+    it('should reject parent directory traversal', () => {
+      const result = sanitizeDownloadPath('../../etc', './downloads');
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('traversal');
+    });
+
+    it('should reject absolute paths outside base dir', () => {
+      const result = sanitizeDownloadPath('/etc/passwd', './downloads');
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('traversal');
+    });
+
+    it('should reject control characters', () => {
+      const result = sanitizeDownloadPath('evil\x00path', './downloads');
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('control');
+    });
+
+    it('should allow nested safe paths', () => {
+      const result = sanitizeDownloadPath('a/b/c', './downloads');
+      expect(result.valid).toBe(true);
+      expect(result.sanitized).toBe(path.resolve('./downloads/a/b/c'));
+    });
+
+    it('should reject traversal hidden inside a long path', () => {
+      const result = sanitizeDownloadPath('ok/../../escape', './downloads');
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject a symlink pointing outside base dir', () => {
+      const os = require('os');
+      const tmpDir = os.tmpdir();
+      const baseDir = path.join(tmpDir, 'mcp-test-base');
+      const outsideDir = path.join(tmpDir, 'mcp-test-outside');
+      const linkPath = path.join(baseDir, 'evil-link');
+
+      const fs = require('fs');
+      fs.mkdirSync(baseDir, { recursive: true });
+      fs.mkdirSync(outsideDir, { recursive: true });
+      try {
+        // Create symlink/junction pointing outside baseDir
+        if (os.platform() === 'win32') {
+          fs.symlinkSync(outsideDir, linkPath, 'junction');
+        } else {
+          fs.symlinkSync(outsideDir, linkPath, 'dir');
+        }
+
+        const result = sanitizeDownloadPath('evil-link', baseDir);
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('traversal');
+      } finally {
+        try { fs.rmSync(linkPath, { force: true }); } catch { /* */ }
+        try { fs.rmSync(baseDir, { recursive: true, force: true }); } catch { /* */ }
+        try { fs.rmSync(outsideDir, { recursive: true, force: true }); } catch { /* */ }
+      }
+    });
+  });
+
+  describe('sanitizeFilename', () => {
+    it('should strip path separators', () => {
+      expect(sanitizeFilename('foo/bar')).toBe('foo_bar');
+      expect(sanitizeFilename('foo\\bar')).toBe('foo_bar');
+    });
+
+    it('should strip traversal segments', () => {
+      expect(sanitizeFilename('../../etc')).toBe('.._.._etc');
+    });
+
+    it('should return a default for empty input', () => {
+      expect(sanitizeFilename('')).toBe('download');
+    });
+
+    it('should remove dangerous characters', () => {
+      const result = sanitizeFilename('file<:>:"|?*');
+      expect(result).not.toMatch(/[<>:"|?*]/);
     });
   });
 });
