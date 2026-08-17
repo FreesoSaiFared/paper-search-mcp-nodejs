@@ -18,7 +18,7 @@ jobs:
             'https://media.giphy.com/media/l3V0mnnGcVblF8bAI/giphy.mp4' \
             -o artifact/giphy_test.mp4
           sha256sum artifact/giphy_test.mp4 | tee artifact/SHA256SUMS
-          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height -of json artifact/giphy_test.mp4 > artifact/ffprobe.json
+          python -c "import os,json; print(json.dumps({'size':os.path.getsize('artifact/giphy_test.mp4')}))" > artifact/metadata.json
       - name: Upload fetched bytes
         uses: actions/upload-artifact@v4
         with:
