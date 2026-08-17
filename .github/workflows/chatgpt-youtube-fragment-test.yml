@@ -5,50 +5,37 @@ on:
       - '.github/workflows/chatgpt-youtube-fragment-test.yml'
 
 jobs:
-  fetch-fragment:
+  diagnose-cobalt:
     runs-on: ubuntu-latest
     steps:
       - name: Start ephemeral Cobalt resolver
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p artifact
           docker run -d --name cobalt -p 9000:9000 \
             -e API_URL='http://127.0.0.1:9000/' \
             ghcr.io/imputnet/cobalt:latest
           for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:9000/ > cobalt-info.json; then break; fi
+            if curl -sS http://127.0.0.1:9000/ -o artifact/cobalt-info.json; then break; fi
             sleep 1
           done
-          cat cobalt-info.json
-      - name: Resolve YouTube and extract five seconds
+          cat artifact/cobalt-info.json
+      - name: Capture exact Cobalt response
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p artifact
-          curl -fsS -H 'Accept: application/json' -H 'Content-Type: application/json' \
+          set -u
+          CODE=$(curl -sS -o artifact/response.json -w '%{http_code}' \
+            -H 'Accept: application/json' -H 'Content-Type: application/json' \
             --data '{"url":"https://www.youtube.com/watch?v=aqz-KE-bpKQ","videoQuality":"720","youtubeVideoCodec":"h264","youtubeVideoContainer":"mp4","alwaysProxy":true}' \
-            http://127.0.0.1:9000/ > response.json
-          cat response.json
-          python - <<'PY'
-          import json,sys
-          r=json.load(open('response.json'))
-          if r.get('status') not in ('tunnel','redirect'):
-              raise SystemExit('cobalt did not return downloadable URL: '+json.dumps(r))
-          open('resolved-url.txt','w').write(r['url'])
-          PY
-          URL=$(cat resolved-url.txt)
-          curl -fL --retry 3 --retry-all-errors "$URL" -o source.mp4
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
-          ffmpeg -y -ss 10 -i source.mp4 -t 5 -map 0:v:0 -map '0:a?' -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart artifact/big_buck_bunny_10s_15s.mp4
-          sha256sum artifact/big_buck_bunny_10s_15s.mp4 | tee artifact/SHA256SUMS
-          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height,r_frame_rate -of json artifact/big_buck_bunny_10s_15s.mp4 > artifact/ffprobe.json
-          printf '%s\n' 'Source: Big Buck Bunny © Blender Foundation, CC BY 3.0' > artifact/PROVENANCE.txt
-          printf '%s\n' 'Source video ID: aqz-KE-bpKQ; requested interval: 00:10-00:15; resolver: ephemeral self-hosted Cobalt' >> artifact/PROVENANCE.txt
-      - name: Upload fragment
+            http://127.0.0.1:9000/)
+          printf '%s\n' "$CODE" | tee artifact/http-status.txt
+          cat artifact/response.json || true
+          docker logs cobalt > artifact/cobalt-container.log 2>&1 || true
+      - name: Upload diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: chatgpt-youtube-fragment-test
+          name: chatgpt-youtube-cobalt-diagnostic
           path: artifact/
           if-no-files-found: error
           retention-days: 1
