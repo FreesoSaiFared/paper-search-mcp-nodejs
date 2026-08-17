@@ -1,0 +1,41 @@
+name: chatgpt-youtube-fragment-test
+on:
+  push:
+    paths:
+      - '.github/workflows/chatgpt-youtube-fragment-test.yml'
+
+jobs:
+  fetch-fragment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install media tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -q yt-dlp
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+      - name: Extract reusable YouTube fragment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          yt-dlp --no-playlist \
+            --download-sections '*10-15' \
+            --force-keyframes-at-cuts \
+            -f 'bv*[height<=720]+ba/b[height<=720]' \
+            --merge-output-format mp4 \
+            -o 'artifact/big_buck_bunny_10s_15s.%(ext)s' \
+            'https://www.youtube.com/watch?v=aqz-KE-bpKQ'
+          test -f artifact/big_buck_bunny_10s_15s.mp4
+          sha256sum artifact/big_buck_bunny_10s_15s.mp4 | tee artifact/SHA256SUMS
+          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height,r_frame_rate -of json artifact/big_buck_bunny_10s_15s.mp4 > artifact/ffprobe.json
+          printf '%s\n' 'Source: Big Buck Bunny © Blender Foundation, CC BY 3.0' > artifact/PROVENANCE.txt
+          printf '%s\n' 'Source video ID: aqz-KE-bpKQ; requested interval: 00:10-00:15' >> artifact/PROVENANCE.txt
+      - name: Upload fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatgpt-youtube-fragment-test
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 1
