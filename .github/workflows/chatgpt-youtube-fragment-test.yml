@@ -5,37 +5,62 @@ on:
       - '.github/workflows/chatgpt-youtube-fragment-test.yml'
 
 jobs:
-  diagnose-cobalt:
+  fetch-fragment:
     runs-on: ubuntu-latest
     steps:
-      - name: Start ephemeral Cobalt resolver
+      - name: Start official Cobalt plus YouTube session generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker network create cobalt-net
+          docker run -d --name yt-session-generator --network cobalt-net \
+            ghcr.io/imputnet/yt-session-generator:webserver
+          for i in $(seq 1 60); do
+            if docker exec yt-session-generator curl -fsS http://127.0.0.1:8080/token > /tmp/token.json 2>/dev/null; then break; fi
+            sleep 1
+          done
+          echo SESSION_READY
+          cat /tmp/token.json | python -c "import sys,json; d=json.load(sys.stdin); print({k:('present' if d.get(k) else None) for k in d})" || true
+          docker run -d --name cobalt --network cobalt-net -p 9000:9000 \
+            -e API_URL='http://127.0.0.1:9000/' \
+            -e YOUTUBE_SESSION_SERVER='http://yt-session-generator:8080/token' \
+            -e YOUTUBE_SESSION_INNERTUBE_CLIENT='WEB_EMBEDDED' \
+            ghcr.io/imputnet/cobalt:latest
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9000/ > /tmp/cobalt-info.json; then break; fi
+            sleep 1
+          done
+          cat /tmp/cobalt-info.json
+      - name: Resolve YouTube and retrieve media
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifact
-          docker run -d --name cobalt -p 9000:9000 \
-            -e API_URL='http://127.0.0.1:9000/' \
-            ghcr.io/imputnet/cobalt:latest
-          for i in $(seq 1 60); do
-            if curl -sS http://127.0.0.1:9000/ -o artifact/cobalt-info.json; then break; fi
-            sleep 1
-          done
-          cat artifact/cobalt-info.json
-      - name: Capture exact Cobalt response
-        shell: bash
-        run: |
-          set -u
-          CODE=$(curl -sS -o artifact/response.json -w '%{http_code}' \
+          CODE=$(curl -sS -o response.json -w '%{http_code}' \
             -H 'Accept: application/json' -H 'Content-Type: application/json' \
             --data '{"url":"https://www.youtube.com/watch?v=aqz-KE-bpKQ","videoQuality":"720","youtubeVideoCodec":"h264","youtubeVideoContainer":"mp4","alwaysProxy":true}' \
             http://127.0.0.1:9000/)
-          printf '%s\n' "$CODE" | tee artifact/http-status.txt
-          cat artifact/response.json || true
-          docker logs cobalt > artifact/cobalt-container.log 2>&1 || true
-      - name: Upload diagnostics
+          echo HTTP=$CODE
+          cat response.json
+          if [ "$CODE" != 200 ]; then
+            cp response.json artifact/cobalt-error.json
+            docker logs cobalt > artifact/cobalt.log 2>&1 || true
+            exit 1
+          fi
+          URL=$(python -c "import json; r=json.load(open('response.json')); assert r['status'] in ('tunnel','redirect'); print(r['url'])")
+          curl -fL --retry 3 --retry-all-errors "$URL" -o source.bin
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -y -ss 10 -i source.bin -t 5 -map 0:v:0 -map '0:a?' -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart artifact/big_buck_bunny_10s_15s.mp4
+          sha256sum artifact/big_buck_bunny_10s_15s.mp4 | tee artifact/SHA256SUMS
+          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height,r_frame_rate -of json artifact/big_buck_bunny_10s_15s.mp4 > artifact/ffprobe.json
+          printf '%s\n' 'Source: Big Buck Bunny © Blender Foundation, CC BY 3.0' > artifact/PROVENANCE.txt
+          printf '%s\n' 'Source video ID: aqz-KE-bpKQ; requested interval: 00:10-00:15; resolver: Cobalt 11 + official yt-session-generator' >> artifact/PROVENANCE.txt
+      - name: Upload fragment or evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: chatgpt-youtube-cobalt-diagnostic
+          name: chatgpt-youtube-session-test
           path: artifact/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 1
